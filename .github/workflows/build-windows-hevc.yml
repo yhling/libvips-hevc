@@ -1,0 +1,75 @@
+name: Build Windows Binaries with HEVC
+
+on:
+  workflow_dispatch:
+    inputs:
+      variant:
+        description: 'Build variant (vips-web or vips-all)'
+        required: true
+        default: 'vips-web'
+        type: choice
+        options:
+          - vips-web
+          - vips-all
+      with_hevc:
+        description: 'Build with HEVC support'
+        required: false
+        default: false
+        type: boolean
+      target:
+        description: 'Specific target (leave empty for all)'
+        required: false
+        default: ''
+        type: string
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          repository: libvips/build-win64-mxe
+          path: build-win64-mxe
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Windows binaries
+        working-directory: build-win64-mxe
+        run: |
+          chmod +x build.sh
+          
+          # Build command with optional flags
+          BUILD_CMD="./build.sh"
+          
+          if [ "${{ inputs.with_hevc }}" = "true" ]; then
+            BUILD_CMD="$BUILD_CMD --with-hevc"
+          fi
+          
+          if [ -n "${{ inputs.target }}" ]; then
+            BUILD_CMD="$BUILD_CMD --target ${{ inputs.target }}"
+          fi
+          
+          BUILD_CMD="$BUILD_CMD ${{ inputs.variant }}"
+          
+          echo "Running: $BUILD_CMD"
+          $BUILD_CMD
+
+      - name: List built artifacts
+        working-directory: build-win64-mxe
+        run: |
+          echo "Built artifacts:"
+          ls -lh packaging/*.zip || echo "No zip files found"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-binaries-${{ inputs.variant }}-${{ inputs.with_hevc && 'hevc' || 'no-hevc' }}
+          path: build-win64-mxe/packaging/*.zip
+          retention-days: 30
+          if-no-files-found: error
