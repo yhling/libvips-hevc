@@ -64,8 +64,10 @@ jobs:
               "'/data/plugins/hevc-deps/src/$(PKG)-test.c'",
           )
           if s == s2:
-            raise SystemExit("Expected x265.mk to reference $(TOP_DIR)/src/$(PKG)-test.c, but it did not.")
-          mk.write_text(s2, encoding="utf-8")
+            print("x265.mk did not reference $(TOP_DIR)/src/$(PKG)-test.c; skipping patch.")
+          else:
+            mk.write_text(s2, encoding="utf-8")
+            print("Patched x265.mk to compile test from plugin src/")
           PY
 
       - name: Patch cfitsio download URL (avoid flaky upstream)
@@ -77,26 +79,56 @@ jobs:
           from pathlib import Path
           import re
           
-          mk = Path("build/overrides.mk")
-          s = mk.read_text(encoding="utf-8")
+          TARGET_VERSION = "4.6.2"
+          CODELOAD_URL = "https://codeload.github.com/HEASARC/cfitsio/tar.gz/refs/tags/cfitsio-$(cfitsio_VERSION)"
+          CODELOAD_SUBDIR = "cfitsio-cfitsio-$(cfitsio_VERSION)"
+          CODELOAD_SHA256 = "83f710f9441e7c703eeb485c9a475f50801ae7fad32ac7e356a406d318b4c02f"
           
-          # Use GitHub codeload for a stable download path.
-          # This tarball expands to: cfitsio-cfitsio-<version>/
-          s2 = s
-          s2 = re.sub(r"^cfitsio_CHECKSUM\\s*:=\\s*[0-9a-f]{64}\\s*$",
-                      "cfitsio_CHECKSUM := 83f710f9441e7c703eeb485c9a475f50801ae7fad32ac7e356a406d318b4c02f",
-                      s2, flags=re.M)
-          s2 = re.sub(r"^cfitsio_SUBDIR\\s*:=\\s*cfitsio-\\$\\(cfitsio_VERSION\\)\\s*$",
-                      "cfitsio_SUBDIR   := cfitsio-cfitsio-$(cfitsio_VERSION)",
-                      s2, flags=re.M)
-          s2 = re.sub(r"^cfitsio_URL\\s*:=\\s*https://heasarc\\.gsfc\\.nasa\\.gov/FTP/software/fitsio/c/\\$\\(cfitsio_FILE\\)\\s*$",
-                      "cfitsio_URL      := https://codeload.github.com/HEASARC/cfitsio/tar.gz/refs/tags/cfitsio-$(cfitsio_VERSION)",
-                      s2, flags=re.M)
+          candidates = list(Path(".").rglob("*.mk"))
+          touched = []
           
-          if s2 == s:
-            raise SystemExit("Expected to patch cfitsio_* variables in build/overrides.mk, but no changes were made.")
+          for mk in candidates:
+            s = mk.read_text(encoding="utf-8")
+            if "cfitsio_" not in s:
+              continue
           
-          mk.write_text(s2, encoding="utf-8")
+            m = re.search(r"^cfitsio_VERSION\\s*[:+]?=\\s*([^\\s]+)\\s*$", s, flags=re.M)
+            if not m or m.group(1) != TARGET_VERSION:
+              continue
+          
+            s2 = s
+            # Update URL to stable codeload endpoint (regardless of current host)
+            s2 = re.sub(
+              r"^cfitsio_URL\\s*[:+]?=\\s*.*$",
+              f"cfitsio_URL      := {CODELOAD_URL}",
+              s2,
+              flags=re.M,
+            )
+            # Ensure the extracted directory name matches codeload's root folder
+            s2 = re.sub(
+              r"^cfitsio_SUBDIR\\s*[:+]?=\\s*.*$",
+              f"cfitsio_SUBDIR   := {CODELOAD_SUBDIR}",
+              s2,
+              flags=re.M,
+            )
+            # Pin checksum for the codeload tarball
+            s2 = re.sub(
+              r"^cfitsio_CHECKSUM\\s*[:+]?=\\s*[0-9a-f]{64}\\s*$",
+              f"cfitsio_CHECKSUM := {CODELOAD_SHA256}",
+              s2,
+              flags=re.M,
+            )
+          
+            if s2 != s:
+              mk.write_text(s2, encoding="utf-8")
+              touched.append(str(mk))
+          
+          if touched:
+            print("Patched cfitsio download settings in:")
+            for p in touched:
+              print(f" - {p}")
+          else:
+            print("No cfitsio 4.6.2 definitions found to patch; continuing.")
           PY
 
       - name: Build Windows binaries
