@@ -39,52 +39,97 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Patch x265 build to fix missing test file
+      - name: Patch x265 HEVC plugin test source
+        if: ${{ inputs.with_hevc }}
         working-directory: build-win64-mxe
-        if: inputs.with_hevc == true
         run: |
-          # Patch MXE x265 package file to remove x265-test.c compilation
-          # The x265-test.c file doesn't exist and causes build failures
-          # This patch removes or comments out the test compilation step
+          set -euo pipefail
+          mkdir -p build/plugins/hevc-deps/src
+          cat > build/plugins/hevc-deps/src/x265-test.c <<'EOF'
+          #include <x265.h>
           
-          # Check if MXE source directory exists (it might be in the container)
-          # Try to patch any x265-related build files we can find
-          echo "Searching for x265 build files to patch..."
+          int main(void) {
+            const x265_api *api = x265_api_get(8);
+            return api ? 0 : 1;
+          }
+          EOF
           
-          # Look for x265 package files in common locations
-          for x265_file in \
-            "mxe/src/x265.mk" \
-            "src/x265.mk" \
-            "plugins/hevc-deps/x265.mk" \
-            "plugins/hevc-deps/build.sh"; do
-            if [ -f "$x265_file" ]; then
-              echo "Found x265 file: $x265_file"
-              if grep -q "x265-test.c" "$x265_file" 2>/dev/null; then
-                echo "Patching $x265_file to remove x265-test.c reference"
-                # Create backup
-                cp "$x265_file" "$x265_file.bak"
-                # Remove lines containing x265-test.c
-                sed -i '/x265-test\.c/d' "$x265_file" || true
-                # Remove references in command lines
-                sed -i 's|\./src/x265-test\.c||g' "$x265_file" || true
-                sed -i 's|src/x265-test\.c||g' "$x265_file" || true
-              fi
-            fi
-          done
+          python3 - <<'PY'
+          from pathlib import Path
           
-          # Also search recursively for any files that might reference it
-          if [ -d "plugins/hevc-deps" ]; then
-            echo "Searching in plugins/hevc-deps..."
-            find plugins/hevc-deps -type f \( -name "*.mk" -o -name "*.sh" -o -name "*.cmake" \) -exec grep -l "x265-test" {} \; 2>/dev/null | while read file; do
-              echo "Patching $file"
-              sed -i.bak '/x265-test\.c/d' "$file" || true
-              sed -i.bak 's|\./src/x265-test\.c||g' "$file" || true
-            done
-          fi
+          mk = Path("build/plugins/hevc-deps/x265.mk")
+          s = mk.read_text(encoding="utf-8")
+          s2 = s.replace(
+              "'$(TOP_DIR)/src/$(PKG)-test.c'",
+              "'/data/plugins/hevc-deps/src/$(PKG)-test.c'",
+          )
+          if s == s2:
+            print("x265.mk did not reference $(TOP_DIR)/src/$(PKG)-test.c; skipping patch.")
+          else:
+            mk.write_text(s2, encoding="utf-8")
+            print("Patched x265.mk to compile test from plugin src/")
+          PY
+
+      - name: Patch cfitsio download URL (avoid flaky upstream)
+        working-directory: build-win64-mxe
+        run: |
+          set -euo pipefail
           
-          echo "Patch complete. If files were found and patched, the build should proceed."
-          echo "Note: If the error persists, the x265 package file may be inside the Docker container."
-          echo "In that case, you may need to fork libvips/build-win64-mxe and fix the x265 package definition there."
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          
+          TARGET_VERSION = "4.6.2"
+          CODELOAD_URL = "https://codeload.github.com/HEASARC/cfitsio/tar.gz/refs/tags/cfitsio-$(cfitsio_VERSION)"
+          CODELOAD_SUBDIR = "cfitsio-cfitsio-$(cfitsio_VERSION)"
+          CODELOAD_SHA256 = "83f710f9441e7c703eeb485c9a475f50801ae7fad32ac7e356a406d318b4c02f"
+          
+          candidates = list(Path(".").rglob("*.mk"))
+          touched = []
+          
+          for mk in candidates:
+            s = mk.read_text(encoding="utf-8")
+            if "cfitsio_" not in s:
+              continue
+          
+            m = re.search(r"^cfitsio_VERSION\\s*[:+]?=\\s*([^\\s]+)\\s*$", s, flags=re.M)
+            if not m or m.group(1) != TARGET_VERSION:
+              continue
+          
+            s2 = s
+            # Update URL to stable codeload endpoint (regardless of current host)
+            s2 = re.sub(
+              r"^cfitsio_URL\\s*[:+]?=\\s*.*$",
+              f"cfitsio_URL      := {CODELOAD_URL}",
+              s2,
+              flags=re.M,
+            )
+            # Ensure the extracted directory name matches codeload's root folder
+            s2 = re.sub(
+              r"^cfitsio_SUBDIR\\s*[:+]?=\\s*.*$",
+              f"cfitsio_SUBDIR   := {CODELOAD_SUBDIR}",
+              s2,
+              flags=re.M,
+            )
+            # Pin checksum for the codeload tarball
+            s2 = re.sub(
+              r"^cfitsio_CHECKSUM\\s*[:+]?=\\s*[0-9a-f]{64}\\s*$",
+              f"cfitsio_CHECKSUM := {CODELOAD_SHA256}",
+              s2,
+              flags=re.M,
+            )
+          
+            if s2 != s:
+              mk.write_text(s2, encoding="utf-8")
+              touched.append(str(mk))
+          
+          if touched:
+            print("Patched cfitsio download settings in:")
+            for p in touched:
+              print(f" - {p}")
+          else:
+            print("No cfitsio 4.6.2 definitions found to patch; continuing.")
+          PY
 
       - name: Build Windows binaries
         working-directory: build-win64-mxe
