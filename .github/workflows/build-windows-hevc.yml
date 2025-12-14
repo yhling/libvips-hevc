@@ -39,6 +39,66 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Patch build.sh (remove contains_gpl_libs checks)
+        working-directory: build-win64-mxe
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          p = Path("build.sh")
+          s = p.read_text(encoding="utf-8")
+          orig = s
+
+          # 1) Remove the contains_gpl_libs assignment line
+          s = re.sub(
+              r'^\[ "\$with_hevc" = true \] && contains_gpl_libs=.*\n',
+              "",
+              s,
+              flags=re.M,
+          )
+
+          # 2) Remove contains_gpl_libs from default target selection.
+          #    Keep the --with-ffi-compat behaviour; otherwise default to both shared+static.
+          s = re.sub(
+              r'if \[ \${#mxe_targets\[@\]} -eq 0 \]; then\n'
+              r'  if \[ "\$contains_gpl_libs" = true \]; then\n'
+              r'(?:.|\n)*?'
+              r'  fi\n'
+              r'fi\n',
+              "if [ ${#mxe_targets[@]} -eq 0 ]; then\n"
+              "  if [ \"$with_ffi_compat\" = true ]; then\n"
+              "    # Omit shared builds by default for the --with-ffi-compat option\n"
+              "    mxe_targets=({x86_64,i686,aarch64}-w64-mingw32.static)\n"
+              "  else\n"
+              "    # Default to all possible targets otherwise\n"
+              "    mxe_targets=({x86_64,i686,aarch64}-w64-mingw32.{shared,static})\n"
+              "  fi\n"
+              "fi\n",
+              s,
+          )
+
+          # 3) Remove the hard error that blocks static targets when contains_gpl_libs is true
+          s = re.sub(
+              r'if \[ "\$targets_static" = true \] && \[ "\$contains_gpl_libs" = true \]; then\n'
+              r'(?:.|\n)*?'
+              r'fi\n',
+              "",
+              s,
+          )
+
+          if s == orig:
+              print("No contains_gpl_libs sections found to patch in build.sh; continuing.")
+          else:
+              p.write_text(s, encoding="utf-8")
+              print("Patched build.sh to remove contains_gpl_libs checks.")
+
+          # If build.sh still references contains_gpl_libs, fail fast so we don't silently keep gating.
+          if "contains_gpl_libs" in p.read_text(encoding="utf-8"):
+              raise SystemExit("build.sh still contains 'contains_gpl_libs' after patch; refusing to continue.")
+          PY
+
       - name: Patch x265 HEVC plugin test source
         if: ${{ inputs.with_hevc }}
         working-directory: build-win64-mxe
