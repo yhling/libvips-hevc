@@ -39,6 +39,35 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Patch x265 HEVC plugin test source
+        if: ${{ inputs.with_hevc }}
+        working-directory: build-win64-mxe
+        run: |
+          set -euo pipefail
+          mkdir -p build/plugins/hevc-deps/src
+          cat > build/plugins/hevc-deps/src/x265-test.c <<'EOF'
+          #include <x265.h>
+          
+          int main(void) {
+            const x265_api *api = x265_api_get(8);
+            return api ? 0 : 1;
+          }
+          EOF
+          
+          python3 - <<'PY'
+          from pathlib import Path
+          
+          mk = Path("build/plugins/hevc-deps/x265.mk")
+          s = mk.read_text(encoding="utf-8")
+          s2 = s.replace(
+              "'$(TOP_DIR)/src/$(PKG)-test.c'",
+              "'/data/plugins/hevc-deps/src/$(PKG)-test.c'",
+          )
+          if s == s2:
+            raise SystemExit("Expected x265.mk to reference $(TOP_DIR)/src/$(PKG)-test.c, but it did not.")
+          mk.write_text(s2, encoding="utf-8")
+          PY
+
       - name: Build Windows binaries
         working-directory: build-win64-mxe
         run: |
