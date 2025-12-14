@@ -68,6 +68,37 @@ jobs:
           mk.write_text(s2, encoding="utf-8")
           PY
 
+      - name: Patch cfitsio download URL (avoid flaky upstream)
+        working-directory: build-win64-mxe
+        run: |
+          set -euo pipefail
+          
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          
+          mk = Path("build/overrides.mk")
+          s = mk.read_text(encoding="utf-8")
+          
+          # Use GitHub codeload for a stable download path.
+          # This tarball expands to: cfitsio-cfitsio-<version>/
+          s2 = s
+          s2 = re.sub(r"^cfitsio_CHECKSUM\\s*:=\\s*[0-9a-f]{64}\\s*$",
+                      "cfitsio_CHECKSUM := 83f710f9441e7c703eeb485c9a475f50801ae7fad32ac7e356a406d318b4c02f",
+                      s2, flags=re.M)
+          s2 = re.sub(r"^cfitsio_SUBDIR\\s*:=\\s*cfitsio-\\$\\(cfitsio_VERSION\\)\\s*$",
+                      "cfitsio_SUBDIR   := cfitsio-cfitsio-$(cfitsio_VERSION)",
+                      s2, flags=re.M)
+          s2 = re.sub(r"^cfitsio_URL\\s*:=\\s*https://heasarc\\.gsfc\\.nasa\\.gov/FTP/software/fitsio/c/\\$\\(cfitsio_FILE\\)\\s*$",
+                      "cfitsio_URL      := https://codeload.github.com/HEASARC/cfitsio/tar.gz/refs/tags/cfitsio-$(cfitsio_VERSION)",
+                      s2, flags=re.M)
+          
+          if s2 == s:
+            raise SystemExit("Expected to patch cfitsio_* variables in build/overrides.mk, but no changes were made.")
+          
+          mk.write_text(s2, encoding="utf-8")
+          PY
+
       - name: Build Windows binaries
         working-directory: build-win64-mxe
         run: |
