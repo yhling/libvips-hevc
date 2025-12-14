@@ -39,6 +39,53 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Patch x265 build to fix missing test file
+        working-directory: build-win64-mxe
+        if: inputs.with_hevc == true
+        run: |
+          # Patch MXE x265 package file to remove x265-test.c compilation
+          # The x265-test.c file doesn't exist and causes build failures
+          # This patch removes or comments out the test compilation step
+          
+          # Check if MXE source directory exists (it might be in the container)
+          # Try to patch any x265-related build files we can find
+          echo "Searching for x265 build files to patch..."
+          
+          # Look for x265 package files in common locations
+          for x265_file in \
+            "mxe/src/x265.mk" \
+            "src/x265.mk" \
+            "plugins/hevc-deps/x265.mk" \
+            "plugins/hevc-deps/build.sh"; do
+            if [ -f "$x265_file" ]; then
+              echo "Found x265 file: $x265_file"
+              if grep -q "x265-test.c" "$x265_file" 2>/dev/null; then
+                echo "Patching $x265_file to remove x265-test.c reference"
+                # Create backup
+                cp "$x265_file" "$x265_file.bak"
+                # Remove lines containing x265-test.c
+                sed -i '/x265-test\.c/d' "$x265_file" || true
+                # Remove references in command lines
+                sed -i 's|\./src/x265-test\.c||g' "$x265_file" || true
+                sed -i 's|src/x265-test\.c||g' "$x265_file" || true
+              fi
+            fi
+          done
+          
+          # Also search recursively for any files that might reference it
+          if [ -d "plugins/hevc-deps" ]; then
+            echo "Searching in plugins/hevc-deps..."
+            find plugins/hevc-deps -type f \( -name "*.mk" -o -name "*.sh" -o -name "*.cmake" \) -exec grep -l "x265-test" {} \; 2>/dev/null | while read file; do
+              echo "Patching $file"
+              sed -i.bak '/x265-test\.c/d' "$file" || true
+              sed -i.bak 's|\./src/x265-test\.c||g' "$file" || true
+            done
+          fi
+          
+          echo "Patch complete. If files were found and patched, the build should proceed."
+          echo "Note: If the error persists, the x265 package file may be inside the Docker container."
+          echo "In that case, you may need to fork libvips/build-win64-mxe and fix the x265 package definition there."
+
       - name: Build Windows binaries
         working-directory: build-win64-mxe
         run: |
