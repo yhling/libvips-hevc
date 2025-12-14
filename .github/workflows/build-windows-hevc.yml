@@ -144,36 +144,52 @@ jobs:
           CODELOAD_SUBDIR = "cfitsio-cfitsio-$(cfitsio_VERSION)"
           CODELOAD_SHA256 = "83f710f9441e7c703eeb485c9a475f50801ae7fad32ac7e356a406d318b4c02f"
           
-          candidates = list(Path(".").rglob("*.mk"))
+          # Prefer the known location in build-win64-mxe, but fall back to scanning
+          # if the layout changes upstream.
+          preferred = Path("build/overrides.mk")
+          if preferred.exists():
+            candidates = [preferred]
+          else:
+            candidates = list(Path(".").rglob("overrides.mk")) + list(Path(".").rglob("*.mk"))
+          
           touched = []
+          matched = []
           
           for mk in candidates:
             s = mk.read_text(encoding="utf-8")
-            if "cfitsio_" not in s:
+            if "cfitsio_" not in s and "cfitsio" not in s:
               continue
           
-            m = re.search(r"^cfitsio_VERSION\\s*[:+]?=\\s*([^\\s]+)\\s*$", s, flags=re.M)
-            if not m or m.group(1) != TARGET_VERSION:
+            # Accept :=, =, ?=, += and tolerate trailing comments.
+            m = re.search(
+              r"^\\s*cfitsio_VERSION\\s*(?:(?::|\\+|\\?)?=)\\s*([^\\s#]+)\\s*(?:#.*)?$",
+              s,
+              flags=re.M,
+            )
+            if not m:
+              continue
+            if m.group(1) != TARGET_VERSION:
               continue
           
+            matched.append(str(mk))
             s2 = s
             # Update URL to stable codeload endpoint (regardless of current host)
             s2 = re.sub(
-              r"^cfitsio_URL\\s*[:+]?=\\s*.*$",
+              r"^\\s*cfitsio_URL\\s*(?:(?::|\\+|\\?)?=)\\s*.*?(?:\\s+#.*)?$",
               f"cfitsio_URL      := {CODELOAD_URL}",
               s2,
               flags=re.M,
             )
             # Ensure the extracted directory name matches codeload's root folder
             s2 = re.sub(
-              r"^cfitsio_SUBDIR\\s*[:+]?=\\s*.*$",
+              r"^\\s*cfitsio_SUBDIR\\s*(?:(?::|\\+|\\?)?=)\\s*.*?(?:\\s+#.*)?$",
               f"cfitsio_SUBDIR   := {CODELOAD_SUBDIR}",
               s2,
               flags=re.M,
             )
             # Pin checksum for the codeload tarball
             s2 = re.sub(
-              r"^cfitsio_CHECKSUM\\s*[:+]?=\\s*[0-9a-f]{64}\\s*$",
+              r"^\\s*cfitsio_CHECKSUM\\s*(?:(?::|\\+|\\?)?=)\\s*[0-9A-Fa-f]{64}\\s*(?:#.*)?$",
               f"cfitsio_CHECKSUM := {CODELOAD_SHA256}",
               s2,
               flags=re.M,
@@ -187,8 +203,17 @@ jobs:
             print("Patched cfitsio download settings in:")
             for p in touched:
               print(f" - {p}")
+          elif matched:
+            print("Found cfitsio 4.6.2 definitions, but no changes were needed in:")
+            for p in matched:
+              print(f" - {p}")
           else:
-            print("No cfitsio 4.6.2 definitions found to patch; continuing.")
+            msg = "No cfitsio 4.6.2 definitions found to patch."
+            if preferred.exists():
+              msg += f" (Checked {preferred})"
+            else:
+              msg += " (Searched for overrides.mk / *.mk)"
+            print(msg)
           PY
 
       - name: Build Windows binaries
