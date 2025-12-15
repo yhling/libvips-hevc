@@ -28,6 +28,11 @@ jobs:
     permissions:
       contents: read
       packages: read
+      actions: write
+    env:
+      # Used by our runtime patch to enable Docker Buildx GHA layer caching.
+      # Include inputs so caches don't cross-contaminate different build matrices.
+      BUILDX_CACHE_SCOPE: libvips-build-win64-mxe-${{ inputs.variant }}-${{ inputs.with_hevc && 'hevc' || 'no-hevc' }}-${{ inputs.target != '' && inputs.target || 'all-targets' }}
 
     steps:
       - name: Checkout repository
@@ -97,6 +102,70 @@ jobs:
           # If build.sh still references contains_gpl_libs, fail fast so we don't silently keep gating.
           if "contains_gpl_libs" in p.read_text(encoding="utf-8"):
               raise SystemExit("build.sh still contains 'contains_gpl_libs' after patch; refusing to continue.")
+          PY
+
+      - name: Patch build.sh (enable Docker Buildx layer caching)
+        working-directory: build-win64-mxe
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          p = Path("build.sh")
+          s = p.read_text(encoding="utf-8")
+          orig = s
+
+          # Replace the single "$oci_runtime build \\" invocation that builds libvips-build-win-mxe
+          # with a Docker Buildx build that uses GitHub Actions cache (type=gha).
+          #
+          # This keeps podman support intact (falls back to "$oci_runtime build ...").
+          pattern = re.compile(
+              r"""(?mx)
+              ^#\ Build\ requested\ packages\s*\n
+              ^\$oci_runtime\ build\s*\\\n
+              (?:.*\n)*?
+              ^\s*build\s*\n
+              """,
+          )
+
+          replacement = """# Build requested packages
+          if [ "$oci_runtime" = docker ] && docker buildx version >/dev/null 2>&1; then
+            docker buildx build \\
+              --pull=$with_prebuilt \\
+              --cache-from "type=gha,scope=${BUILDX_CACHE_SCOPE:-libvips-build-win-mxe}" \\
+              --cache-to "type=gha,mode=max,scope=${BUILDX_CACHE_SCOPE:-libvips-build-win-mxe}" \\
+              --load \\
+              -t libvips-build-win-mxe \\
+              -f container/Dockerfile \\
+              --build-arg BASE_IMAGE="$image" \\
+              --build-arg PKGS="${pkgs[*]}" \\
+              --build-arg MXE_TARGETS="${mxe_targets[*]}" \\
+              --build-arg DEBUG="$with_debug" \\
+              --build-arg PLUGIN_DIRS="$plugin_dirs" \\
+              --build-arg GIT_COMMIT="$git_commit" \\
+              build
+          else
+            $oci_runtime build \\
+              --pull=$with_prebuilt \\
+              -t libvips-build-win-mxe \\
+              -f container/Dockerfile \\
+              --build-arg BASE_IMAGE="$image" \\
+              --build-arg PKGS="${pkgs[*]}" \\
+              --build-arg MXE_TARGETS="${mxe_targets[*]}" \\
+              --build-arg DEBUG="$with_debug" \\
+              --build-arg PLUGIN_DIRS="$plugin_dirs" \\
+              --build-arg GIT_COMMIT="$git_commit" \\
+              build
+          fi
+          """
+
+          s2, n = pattern.subn(replacement, s, count=1)
+          if n != 1:
+            raise SystemExit(f"Expected to patch exactly one build invocation, patched: {n}")
+
+          p.write_text(s2, encoding="utf-8")
+          print("Patched build.sh to use docker buildx build with GHA cache (when docker is available).")
           PY
 
       - name: Patch x265 HEVC plugin test source
