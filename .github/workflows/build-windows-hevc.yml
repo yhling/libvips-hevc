@@ -286,6 +286,44 @@ jobs:
           print(target.read_text(encoding="utf-8"), end="")
           PY
 
+      - name: Patch ImageMagick for static libxml2 (LIBXML_STATIC)
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          target = Path("build-win64-mxe/build/overrides.mk")
+          if not target.exists():
+            raise SystemExit(f"Expected file not found: {target}")
+
+          s = target.read_text(encoding="utf-8")
+          m = re.search(r"define imagemagick_BUILD\n(?P<body>[\s\S]*?)\nendef\n", s)
+          if not m:
+            raise SystemExit("Could not find 'define imagemagick_BUILD' block in build/overrides.mk")
+
+          body = m.group("body")
+          if "LIBXML_STATIC" in body:
+            print("imagemagick_BUILD already sets LIBXML_STATIC; skipping patch.")
+            raise SystemExit(0)
+
+          needle = "        $(PKG_CONFIGURE_OPTS)\n"
+          if needle not in body:
+            raise SystemExit("Unexpected imagemagick_BUILD format: missing $(PKG_CONFIGURE_OPTS) line")
+
+          body2 = body.replace(
+            needle,
+            "        $(PKG_CONFIGURE_OPTS) \\\n"
+            "        $(if $(BUILD_STATIC), CFLAGS='$(CFLAGS) -DLIBXML_STATIC')\n",
+            1,
+          )
+
+          s2 = s[:m.start("body")] + body2 + s[m.end("body"):]
+          target.write_text(s2, encoding="utf-8")
+          print("Patched imagemagick_BUILD to define LIBXML_STATIC for static builds.")
+          PY
+
       - name: Build Windows binaries
         working-directory: build-win64-mxe
         run: |
