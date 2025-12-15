@@ -44,66 +44,6 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Patch build.sh (remove contains_gpl_libs checks)
-        working-directory: build-win64-mxe
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
-
-          p = Path("build.sh")
-          s = p.read_text(encoding="utf-8")
-          orig = s
-
-          # 1) Remove the contains_gpl_libs assignment line
-          s = re.sub(
-              r'^\[ "\$with_hevc" = true \] && contains_gpl_libs=.*\n',
-              "",
-              s,
-              flags=re.M,
-          )
-
-          # 2) Remove contains_gpl_libs from default target selection.
-          #    Keep the --with-ffi-compat behaviour; otherwise default to both shared+static.
-          s = re.sub(
-              r'if \[ \${#mxe_targets\[@\]} -eq 0 \]; then\n'
-              r'  if \[ "\$contains_gpl_libs" = true \]; then\n'
-              r'(?:.|\n)*?'
-              r'  fi\n'
-              r'fi\n',
-              "if [ ${#mxe_targets[@]} -eq 0 ]; then\n"
-              "  if [ \"$with_ffi_compat\" = true ]; then\n"
-              "    # Omit shared builds by default for the --with-ffi-compat option\n"
-              "    mxe_targets=({x86_64,i686,aarch64}-w64-mingw32.static)\n"
-              "  else\n"
-              "    # Default to all possible targets otherwise\n"
-              "    mxe_targets=({x86_64,i686,aarch64}-w64-mingw32.{shared,static})\n"
-              "  fi\n"
-              "fi\n",
-              s,
-          )
-
-          # 3) Remove the hard error that blocks static targets when contains_gpl_libs is true
-          s = re.sub(
-              r'if \[ "\$targets_static" = true \] && \[ "\$contains_gpl_libs" = true \]; then\n'
-              r'(?:.|\n)*?'
-              r'fi\n',
-              "",
-              s,
-          )
-
-          if s == orig:
-              print("No contains_gpl_libs sections found to patch in build.sh; continuing.")
-          else:
-              p.write_text(s, encoding="utf-8")
-              print("Patched build.sh to remove contains_gpl_libs checks.")
-
-          # If build.sh still references contains_gpl_libs, fail fast so we don't silently keep gating.
-          if "contains_gpl_libs" in p.read_text(encoding="utf-8"):
-              raise SystemExit("build.sh still contains 'contains_gpl_libs' after patch; refusing to continue.")
-          PY
-
       - name: Patch build.sh (enable Docker Buildx layer caching)
         working-directory: build-win64-mxe
         run: |
@@ -249,41 +189,6 @@ jobs:
             s = s2
           vips_web.write_text(s, encoding="utf-8")
           print("Patched web-deps/vips-web.mk to include libde265/x265 in versions.json when IS_HEVC is set.")
-          PY
-
-      - name: Patch cfitsio download URL (avoid flaky upstream)
-        run: |
-          set -euo pipefail
-
-          python3 - <<'PY'
-          from pathlib import Path
-
-          target = Path("build-win64-mxe/build/overrides.mk")
-          if not target.exists():
-            raise SystemExit(f"Expected file not found: {target}")
-
-          lines = target.read_text(encoding="utf-8").splitlines(keepends=True)
-          out = []
-
-          for line in lines:
-            if ("cfitsio_URL" in line) or ("cfitsio_CHECKSUM" in line):
-              if not line.startswith("#"):
-                line = "#" + line
-            out.append(line)
-
-          text = "".join(out)
-
-          # Append pinned definitions EXACTLY to the bottom of the file.
-          text += '\ncfitsio_URL      := https://codeload.github.com/HEASARC/cfitsio/tar.gz/refs/tags/cfitsio-$(cfitsio_VERSION)\n'
-          text += 'cfitsio_CHECKSUM := 83f710f9441e7c703eeb485c9a475f50801ae7fad32ac7e356a406d318b4c02f\n\n'
-          # GitHub codeload archives extract to "<repo>-<tag>/" rather than "cfitsio-<version>/".
-          # MXE's default expects "$(PKG)-$(VERSION)", so override the subdir name to match.
-          text += 'cfitsio_SUBDIR   := cfitsio-cfitsio-$(cfitsio_VERSION)\n\n'
-
-          target.write_text(text, encoding="utf-8")
-
-          # Print out the file.
-          print(target.read_text(encoding="utf-8"), end="")
           PY
 
       - name: Build Windows binaries
