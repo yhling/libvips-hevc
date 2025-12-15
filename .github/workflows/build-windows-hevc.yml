@@ -155,6 +155,9 @@ jobs:
           # Append pinned definitions EXACTLY to the bottom of the file.
           text += '\ncfitsio_URL      := https://codeload.github.com/HEASARC/cfitsio/tar.gz/refs/tags/cfitsio-$(cfitsio_VERSION)\n'
           text += 'cfitsio_CHECKSUM := 83f710f9441e7c703eeb485c9a475f50801ae7fad32ac7e356a406d318b4c02f\n\n'
+          # GitHub codeload archives extract to "<repo>-<tag>/" rather than "cfitsio-<version>/".
+          # MXE's default expects "$(PKG)-$(VERSION)", so override the subdir name to match.
+          text += 'cfitsio_SUBDIR   := cfitsio-cfitsio-$(cfitsio_VERSION)\n\n'
 
           target.write_text(text, encoding="utf-8")
 
