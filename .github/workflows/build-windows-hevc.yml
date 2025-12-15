@@ -199,6 +199,58 @@ jobs:
             print("Patched x265.mk to compile test from plugin src/")
           PY
 
+      - name: Patch vips-web plugin for HEVC (enable heif module + record x265 versions)
+        if: ${{ inputs.with_hevc && inputs.variant == 'vips-web' }}
+        working-directory: build-win64-mxe
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          
+          # 1) Ensure the vips-web build can enable the HEIF module when --with-hevc is used.
+          # Upstream uses modules + heif-module to isolate HEVC/GPL bits.
+          overrides = Path("build/plugins/web-deps/overrides.mk")
+          s = overrides.read_text(encoding="utf-8")
+          orig = s
+          s = s.replace(
+              "vips_MESON_OPTS = \\\n"
+              "    -Dmodules=disabled \\\n",
+              "vips_MESON_OPTS = \\\n"
+              "    -Dmodules=$(if $(IS_HEVC),enabled,disabled) \\\n"
+              "    -Dheif-module=$(if $(IS_HEVC),enabled,disabled) \\\n",
+          )
+          if s == orig:
+            raise SystemExit("Unexpected format in build/plugins/web-deps/overrides.mk; refusing to patch.")
+          overrides.write_text(s, encoding="utf-8")
+          print("Patched web-deps/overrides.mk to enable modules+heif-module when IS_HEVC is set.")
+          
+          # 2) Record HEVC dependency versions in vips-web's versions.json, matching vips-all behaviour.
+          vips_web = Path("build/plugins/web-deps/vips-web.mk")
+          s = vips_web.read_text(encoding="utf-8")
+          if '"de265":' not in s:
+            s2 = s.replace(
+                "     printf '  \"cgif\": \"$(cgif_VERSION)\",\\n'; \\\n",
+                "     printf '  \"cgif\": \"$(cgif_VERSION)\",\\n'; \\\n"
+                "     $(if $(IS_HEVC),printf '  \"de265\": \"$(libde265_VERSION)\"$(comma)\\n';) \\\n",
+            )
+            if s2 == s:
+              raise SystemExit("Unexpected format in build/plugins/web-deps/vips-web.mk; could not insert de265 version line.")
+            s = s2
+
+          if '"x265":' not in s:
+            s2 = s.replace(
+                "     printf '  \"webp\": \"$(libwebp_VERSION)\",\\n'; \\\n",
+                "     printf '  \"webp\": \"$(libwebp_VERSION)\",\\n'; \\\n"
+                "     $(if $(IS_HEVC),printf '  \"x265\": \"$(x265_VERSION)\"$(comma)\\n';) \\\n",
+            )
+            if s2 == s:
+              raise SystemExit("Unexpected format in build/plugins/web-deps/vips-web.mk; could not insert x265 version line.")
+            s = s2
+          vips_web.write_text(s, encoding="utf-8")
+          print("Patched web-deps/vips-web.mk to include libde265/x265 in versions.json when IS_HEVC is set.")
+          PY
+
       - name: Patch cfitsio download URL (avoid flaky upstream)
         run: |
           set -euo pipefail

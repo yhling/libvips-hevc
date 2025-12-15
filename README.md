@@ -8,8 +8,8 @@ The `libvips/build-win64-mxe` repository provides a Docker-based build system fo
 
 ### Current Workflow Files
 
-The repository currently has **one GitHub Actions workflow**:
-- **`.github/workflows/oci-publish.yml`**: Publishes the base Docker image to GitHub Container Registry (`ghcr.io/libvips/build-win64-mxe:latest`)
+This repository provides a GitHub Actions workflow:
+- **`.github/workflows/build-windows-hevc.yml`**: Builds Windows binaries via `libvips/build-win64-mxe`, with optional `--with-hevc` support.
 
 ### Build Script (`build.sh`)
 
@@ -202,6 +202,10 @@ The built binaries will be in the `packaging/` directory as zip files.
 4. **Dependencies**: The `--with-hevc` flag adds:
    - `libde265` (HEVC decoder)
    - `x265` (HEVC encoder)
+
+## vips-web + HEVC note
+
+The upstream `vips-web` plugin does not enable the HEIF module by default and does not record `x265/libde265` in `versions.json`. This workflow patches the checked-out upstream build scripts during CI so that `variant=vips-web` with `with_hevc=true` will include and record `x265` correctly.
 
 ## References
 
