@@ -56,6 +56,15 @@ jobs:
           s = p.read_text(encoding="utf-8")
           orig = s
 
+          # 0) Accept --with_hevc as an alias for --with-hevc
+          if "--with_hevc" not in s:
+              s = re.sub(
+                  r'^(\s*)--with-hevc\)\s*with_hevc=true\s*;;\s*$',
+                  r'\1--with-hevc|--with_hevc) with_hevc=true ;;',
+                  s,
+                  flags=re.M,
+              )
+
           # 1) Remove the contains_gpl_libs assignment line
           s = re.sub(
               r'^\[ "\$with_hevc" = true \] && contains_gpl_libs=.*\n',
