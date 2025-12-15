@@ -76,11 +76,6 @@ jobs:
               "  if [ \"$with_ffi_compat\" = true ]; then\n"
               "    # Omit shared builds by default for the --with-ffi-compat option\n"
               "    mxe_targets=({x86_64,i686,aarch64}-w64-mingw32.static)\n"
-              "  elif [ \"$with_hevc\" = true ]; then\n"
-              "    # HEVC builds currently fail for static targets because libheif's libde265\n"
-              "    # decoder plugin ends up with dllimport references (needs an import library,\n"
-              "    # not a static archive). Default to shared-only to keep the workflow green.\n"
-              "    mxe_targets=({x86_64,i686,aarch64}-w64-mingw32.shared)\n"
               "  else\n"
               "    # Default to all possible targets otherwise\n"
               "    mxe_targets=({x86_64,i686,aarch64}-w64-mingw32.{shared,static})\n"
@@ -254,6 +249,43 @@ jobs:
             s = s2
           vips_web.write_text(s, encoding="utf-8")
           print("Patched web-deps/vips-web.mk to include libde265/x265 in versions.json when IS_HEVC is set.")
+          PY
+
+      - name: Patch libheif for libde265 static builds (avoid dllimport)
+        if: ${{ inputs.with_hevc }}
+        working-directory: build-win64-mxe
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          p = Path("build/libheif.mk")
+          s = p.read_text(encoding="utf-8")
+
+          marker = "LIBDE265_STATIC_BUILD"
+          if marker in s:
+            print("build/libheif.mk already handles LIBDE265_STATIC_BUILD; skipping patch.")
+            raise SystemExit(0)
+
+          # libde265's public header uses __declspec(dllimport) on Windows unless
+          # LIBDE265_STATIC_BUILD is defined. For MXE *.static targets, we link
+          # against libde265.a, so we must ensure consumers compile without dllimport.
+          #
+          # Reference: libde265/libde265/de265.h
+          needle = "$(eval export CXXFLAGS += -O3)\n"
+          if needle not in s:
+            raise SystemExit("Unexpected format in build/libheif.mk; refusing to patch.")
+
+          insert = needle + (
+            "\n"
+            "    # For static Windows builds, ensure libde265 symbols are not marked dllimport.\n"
+            "    $(if $(and $(IS_HEVC),$(BUILD_STATIC)), $(eval export CXXFLAGS += -DLIBDE265_STATIC_BUILD))\n"
+          )
+
+          s2 = s.replace(needle, insert, 1)
+          p.write_text(s2, encoding="utf-8")
+          print("Patched build/libheif.mk to define LIBDE265_STATIC_BUILD for HEVC+static targets.")
           PY
 
       - name: Patch cfitsio download URL (avoid flaky upstream)
