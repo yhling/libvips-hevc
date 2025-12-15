@@ -135,45 +135,31 @@ jobs:
           set -euo pipefail
 
           python3 - <<'PY'
-          from __future__ import annotations
-
           from pathlib import Path
 
           target = Path("build-win64-mxe/build/overrides.mk")
           if not target.exists():
             raise SystemExit(f"Expected file not found: {target}")
 
-          new_url = 'cfitsio_URL      := "https://codeload.github.com/HEASARC/cfitsio/tar.gz/refs/tags/cfitsio-$(cfitsio_VERSION)"'
-          new_checksum = 'cfitsio_CHECKSUM := "83f710f9441e7c703eeb485c9a475f50801ae7fad32ac7e356a406d318b4c02f"'
-
           lines = target.read_text(encoding="utf-8").splitlines(keepends=True)
-          out: list[str] = []
+          out = []
 
           for line in lines:
-            has_url = "cfitsio_URL" in line
-            has_checksum = "cfitsio_CHECKSUM" in line
-
-            # Prefix "#" to existing definitions, but keep the new pinned lines active.
-            if (has_url or has_checksum) and not line.startswith("#"):
-              stripped = line.rstrip("\n")
-              if stripped != new_url and stripped != new_checksum:
+            if ("cfitsio_URL" in line) or ("cfitsio_CHECKSUM" in line):
+              if not line.startswith("#"):
                 line = "#" + line
             out.append(line)
 
           text = "".join(out)
 
-          # Add the pinned definitions exactly once.
-          if new_url not in text:
-            if not text.endswith("\n"):
-              text += "\n"
-            text += new_url + "\n"
-          if new_checksum not in text:
-            if not text.endswith("\n"):
-              text += "\n"
-            text += new_checksum + "\n"
+          # Append pinned definitions EXACTLY to the bottom of the file.
+          text += '\n cfitsio_URL      := "https://codeload.github.com/HEASARC/cfitsio/tar.gz/refs/tags/cfitsio-$(cfitsio_VERSION)"\n'
+          text += 'cfitsio_CHECKSUM := "83f710f9441e7c703eeb485c9a475f50801ae7fad32ac7e356a406d318b4c02f"\n\n'
 
           target.write_text(text, encoding="utf-8")
-          print(f"Patched {target}")
+
+          # Print out the file.
+          print(target.read_text(encoding="utf-8"), end="")
           PY
 
       - name: Build Windows binaries
