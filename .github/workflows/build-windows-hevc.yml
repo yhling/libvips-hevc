@@ -25,6 +25,12 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Build each MXE target in its own job to avoid exhausting runner disk
+        # when building all targets in a single container image.
+        target: ${{ fromJson(inputs.target != '' && format('["{0}"]', inputs.target) || '["x86_64-w64-mingw32.shared","x86_64-w64-mingw32.static","i686-w64-mingw32.shared","i686-w64-mingw32.static","aarch64-w64-mingw32.shared","aarch64-w64-mingw32.static"]') }}
     permissions:
       contents: read
       packages: read
@@ -32,9 +38,22 @@ jobs:
     env:
       # Used by our runtime patch to enable Docker Buildx GHA layer caching.
       # Include inputs so caches don't cross-contaminate different build matrices.
-      BUILDX_CACHE_SCOPE: libvips-build-win64-mxe-${{ inputs.variant }}-${{ inputs.with_hevc && 'hevc' || 'no-hevc' }}-${{ inputs.target != '' && inputs.target || 'all-targets' }}
+      BUILDX_CACHE_SCOPE: libvips-build-win64-mxe-${{ inputs.variant }}-${{ inputs.with_hevc && 'hevc' || 'no-hevc' }}-${{ matrix.target }}
 
     steps:
+      - name: Free disk space on runner
+        run: |
+          set -euo pipefail
+          df -h
+          # Remove large preinstalled SDKs/toolchains we don't use in this build.
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /usr/local/share/boost || true
+          sudo apt-get clean || true
+          sudo rm -rf /var/lib/apt/lists/* || true
+          # Best-effort prune (may be unused depending on engine).
+          sudo docker system prune -af || true
+          sudo podman system prune -af || true
+          df -h
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
@@ -270,10 +289,9 @@ jobs:
           if [ "${{ inputs.with_hevc }}" = "true" ]; then
             BUILD_CMD="$BUILD_CMD --with-hevc"
           fi
-          
-          if [ -n "${{ inputs.target }}" ]; then
-            BUILD_CMD="$BUILD_CMD --target ${{ inputs.target }}"
-          fi
+ 
+          # Always build exactly one target per job (matrix.target).
+          BUILD_CMD="$BUILD_CMD --target ${{ matrix.target }}"
           
           BUILD_CMD="$BUILD_CMD ${{ inputs.variant }}"
           
@@ -289,7 +307,7 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: windows-binaries-${{ inputs.variant }}-${{ inputs.with_hevc && 'hevc' || 'no-hevc' }}
+          name: windows-binaries-${{ inputs.variant }}-${{ inputs.with_hevc && 'hevc' || 'no-hevc' }}-${{ matrix.target }}
           path: build-win64-mxe/packaging/*.zip
           retention-days: 30
           if-no-files-found: error
