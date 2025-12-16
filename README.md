@@ -1,8 +1,10 @@
 # Building Windows Binaries with libvips (HEVC Support)
 
+See releases for binaries
+
 ## Overview
 
-The `libvips/build-win64-mxe` repository provides a Docker-based build system for cross-compiling libvips and its dependencies for Windows. This document explains how the build process works and how to add `--with-hevc` support.
+This `libvips/build-win64-mxe` repository provides a Docker-based build system for cross-compiling libvips and its dependencies for Windows. This document explains how the build process works and how to add `--with-hevc` support.
 
 ## Build Process Analysis
 
